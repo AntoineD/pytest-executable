@@ -17,11 +17,13 @@
 
 """Entry point into the pytest executable plugin."""
 
+import asyncio
 import logging
 import sys
-from functools import cmp_to_key
+from collections import defaultdict
+from functools import cmp_to_key, wraps
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Awaitable, Callable, Dict, List, Optional
 
 import _pytest
 import py
@@ -54,6 +56,12 @@ def pytest_addoption(parser):
         "--exe-runner",
         metavar="PATH",
         help="use the shell script at PATH to run an executable",
+    )
+
+    group.addoption(
+        "--exe-wait-sentinel",
+        action="store_true",
+        help="wait for a sentinel file when the executable is run remotely",
     )
 
     group.addoption(
@@ -370,14 +378,18 @@ def pytest_exception_interact(node, call, report):
 def pytest_collection_modifyitems(items: List[_pytest.nodes.Item]) -> None:
     """Change the tests execution order.
 
-    Such that:
-    - the tests in parent directories are executed after the tests in children
-      directories
-    - in a test case directory, the yaml defined tests are executed before the
-      others
+    Such that the first items are a serie of items from test cases starting
+    with a runner, then all other items.
     """
     items.sort(key=cmp_to_key(_sort_parent_last))
     items.sort(key=cmp_to_key(_sort_yaml_first))
+
+    # move the items before the first runner to after all the items
+    for item in list(items):
+        if "runner" in item.fixturenames:
+            break
+        items.remove(item)
+        items += [item]
     _set_marks(items)
 
 
@@ -440,3 +452,102 @@ def pytest_terminal_summary(
         terminalreporter.write_sep("=", "report generation failed", red=True)
     else:
         terminalreporter.write_sep("=", "report generation done")
+
+
+def wrap(
+    func: Callable[[_pytest.nodes.Item, _pytest.nodes.Item], None]
+) -> Awaitable[_pytest.nodes.Item]:
+    """Wrap a sync function into an asyncio one."""
+
+    def run(item, nextitem):
+        func(item=item, nextitem=nextitem)
+        return item
+
+    # @wraps(func)
+    # async def run(
+    #     item: _pytest.nodes.Item, nextitem: _pytest.nodes.Item
+    # ) -> _pytest.nodes.Item:
+    #     await asyncio.get_event_loop().run_in_executor(None, _, item, nextitem)
+    #     return item
+
+    return run
+
+
+def _handle_session_error(session: _pytest.main.Session) -> None:
+    """Handle session error like in the main test loop."""
+    if session.shouldfail:
+        raise session.Failed(session.shouldfail)
+    if session.shouldstop:
+        raise session.Interrupted(session.shouldstop)
+
+
+async def _run_test_loop(session: _pytest.main.Session) -> None:
+    """Run the main test loop of pytest with asyncio."""
+    # determine the items with runner fixture, there shall be only one
+    # such item per test case, record the item until the next test with runner
+    # fixture. The records for the last runner fixture test also has all the
+    # items in directories above the test cases
+    cases_items = defaultdict(list)
+    # TODO: when there is no runner
+    for item in session.items:
+        if "runner" in item.fixturenames:
+            case_items = cases_items[item]
+        else:
+            case_items += [item]
+
+    # run the sentinel items concurrently, as soon as a sentinel item is
+    # finished, run synchronously its dependent items but the last one which is
+    # kept until nextitem is known when the sentinel item if finished
+    coroutines = []
+
+    loop = asyncio.get_event_loop()
+
+    for item, nextitems in cases_items.items():
+        coroutine = wrap(item.config.hook.pytest_runtest_protocol)
+        try:
+            nextitem = nextitems[0]
+        except IndexError:
+            # we don't know what will be the nextitem from the async loop
+            nextitem = None
+            # nextitem = item
+        # coroutines += [coroutine(item=item, nextitem=nextitem)]
+        nextitem = None
+        coroutines += [loop.run_in_executor(None, coroutine, item, nextitem)]
+
+    # __import__('pudb').set_trace()
+    # TODO: timeout for as_completed?
+    for coroutine in asyncio.as_completed(coroutines):
+        sentinel_item = await coroutine
+        print("after await", sentinel_item.fspath)
+        _handle_session_error(session)
+
+        items = cases_items[sentinel_item]
+        for i, item in enumerate(items):
+            nextitem = None
+            # nextitem = items[i + 1] if i + 1 < len(items) else None
+            item.config.hook.pytest_runtest_protocol(item=item, nextitem=nextitem)
+            _handle_session_error(session)
+
+
+def pytest_runtestloop(session: _pytest.main.Session) -> bool:
+    """Override the main test loop when we have to wait for the runner sentinel."""
+    if not session.config.option.exe_wait_sentinel:
+        return _pytest.main.pytest_runtestloop(session)
+
+    # call the pytest main loop without items to handle the errors
+    items = session.items
+    session.items = []
+    _pytest.main.pytest_runtestloop(session)
+    session.items = items
+
+    # handle the collectonly cli option here like in the main loop
+    if session.config.option.collectonly:
+        return True
+
+    event_loop = asyncio.get_event_loop()
+    try:
+        event_loop.run_until_complete(_run_test_loop(session))
+    finally:
+        event_loop.close()
+
+    return True

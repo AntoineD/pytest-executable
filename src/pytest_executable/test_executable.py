@@ -30,3 +30,9 @@ def test_runner(runner):
         runner: Runner object to be run.
     """
     assert runner.run() == 0
+
+    sentinel_path = runner.workdir / "sentinel"
+    import time
+
+    while not sentinel_path.is_file():
+        time.sleep(0.1)
