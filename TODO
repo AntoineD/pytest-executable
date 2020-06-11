@@ -1,0 +1,8 @@
+yaml allow other items: docstring and doc
+rename test_case.yaml to test-settigs.yaml
+rename test_case.py to test_executable.py
+rename TestCaseYamlModule to TestExecutableModule
+doc: execution order
+Are fixtures available to parent or child dir of yaml?
+propagate marks to submodules
+doc: default test-settings.yaml shall contain all the key in the test cases yaml?

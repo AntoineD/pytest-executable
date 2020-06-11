@@ -1,0 +1,8 @@
+Pass the tests of the develop branch on gh ci
+Updatg CHANGELOG.rst
+Merge on master
+Tag on master
+Push on gh
+Pass the tests of the master branch on gh ci
+Upload on pypi: twine upload .tox/dist/pytest-executable-X.Y.Z.zip
+Update anaconda recipe once the bot has done a PR.
