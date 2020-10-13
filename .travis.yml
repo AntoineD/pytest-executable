@@ -3,7 +3,7 @@ python:
   - 3.6
   - 3.7
   - 3.8
-  - 3.9-dev
+  - 3.9
 addons:
   apt:
     packages:
@@ -26,8 +26,6 @@ jobs:
       name: Python 3.7 on MacOS
       env:
         - TRAVIS_PYTHON_VERSION=3.7
-  allow_failures:
-    - python: 3.9-dev
 
 install:
   - python3 -m pip install -U pip
