@@ -17,6 +17,8 @@
 """Tests for the plugin fixtures."""
 from __future__ import annotations
 
+import shutil
+
 from . import assert_outcomes
 
 
@@ -93,14 +95,13 @@ def test_runner_fixture_with_local_settings(testdir):
     )
     assert stdout == "100"
 
-
 def test_runner_not_script(testdir):
     """Test error when the runner is not a text script."""
     directory = testdir.copy_example(RUNNER_DATA_DIR)
     result = testdir.runpytest(
         directory / "tests-inputs/case-local-settings",
         "--exe-runner",
-        "/bin/bash",
+        shutil.which('bash'),
     )
     assert_outcomes(result, errors=1)
     result.stdout.fnmatch_lines(["E   TypeError: cannot read the script */bin/bash"])

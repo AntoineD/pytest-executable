@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -41,7 +42,7 @@ def test_error_with_unreadable_script(tmp_path):
     """Test error when the script is not readable."""
     error_msg = "cannot read the script .*/bin/bash"
     with pytest.raises(TypeError, match=error_msg):
-        ScriptRunner(Path("/bin/bash"), {}, tmp_path)
+        ScriptRunner(Path(shutil.which('bash')), {}, tmp_path)
 
 
 def test_execution_with_setting(tmp_path):
